@@ -23,10 +23,22 @@ function normalizeDomain(input) {
     .replace(/^https?:\/\//, '').replace(/\/.*$/, '');
 }
 
-function json(data, status = 200) {
+// ---------- CORS ----------
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'content-type',
+  'Access-Control-Allow-Credentials': 'true'
+};
+
+function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8' }
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      ...CORS_HEADERS,
+      ...extraHeaders
+    }
   });
 }
 
@@ -205,7 +217,8 @@ async function handleLogout() {
     status: 200,
     headers: {
       'content-type': 'application/json; charset=utf-8',
-      'set-cookie': `boxhax_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`
+      'set-cookie': `boxhax_session=${token}; Path=/; Secure; SameSite=None; Max-Age=${7 * 24 * 60 * 60}`,
+      ...CORS_HEADERS
     }
   });
 }
