@@ -1,5 +1,5 @@
 // ============================================================
-// BoxHax by Nova - Worker 核心（完整版）
+// BoxHax by Nova - Worker 核心（完整版 + CORS）
 // ============================================================
 
 // ---------- 免費版限制 ----------
@@ -12,6 +12,14 @@ function getLimits(edition) {
   return LIMITS[edition] || LIMITS.community;
 }
 
+// ---------- CORS ----------
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'content-type',
+  'Access-Control-Allow-Credentials': 'true'
+};
+
 // ---------- 工具 ----------
 async function sha256Hex(text) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
@@ -23,21 +31,12 @@ function normalizeDomain(input) {
     .replace(/^https?:\/\//, '').replace(/\/.*$/, '');
 }
 
-// ---------- CORS ----------
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'content-type',
-  'Access-Control-Allow-Credentials': 'true'
-};
-
-function json(data, status = 200, extraHeaders = {}) {
+function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       'content-type': 'application/json; charset=utf-8',
-      ...CORS_HEADERS,
-      ...extraHeaders
+      ...CORS_HEADERS
     }
   });
 }
@@ -207,7 +206,8 @@ async function handleLogin(request, env) {
     status: 200,
     headers: {
       'content-type': 'application/json; charset=utf-8',
-      'set-cookie': `boxhax_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${7 * 24 * 60 * 60}`
+      'set-cookie': `boxhax_session=${token}; Path=/; Secure; SameSite=None; Max-Age=${7 * 24 * 60 * 60}`,
+      ...CORS_HEADERS
     }
   });
 }
@@ -217,7 +217,7 @@ async function handleLogout() {
     status: 200,
     headers: {
       'content-type': 'application/json; charset=utf-8',
-      'set-cookie': `boxhax_session=${token}; Path=/; Secure; SameSite=None; Max-Age=${7 * 24 * 60 * 60}`,
+      'set-cookie': `boxhax_session=; Path=/; Secure; SameSite=None; Max-Age=0`,
       ...CORS_HEADERS
     }
   });
@@ -512,6 +512,11 @@ async function route(request, env) {
   const path = url.pathname;
   const method = request.method;
 
+  // CORS 預檢
+  if (method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
   // 公開
   if (path === '/api/login' && method === 'POST') return handleLogin(request, env);
   if (path === '/api/logout' && method === 'POST') return handleLogout();
@@ -565,7 +570,7 @@ async function route(request, env) {
     return handleLineDelete(request, env, m[1]);
   }
 
-  return json({ error: 'not found' }, 404);
+  return json({ error: '未找到' }, 404);
 }
 
 // ============================================================
