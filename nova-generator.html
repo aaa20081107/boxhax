@@ -1,0 +1,569 @@
+<script>
+const API = {
+  me: '/api/me',
+  login: '/api/login',
+  logout: '/api/logout',
+  license: '/api/license',
+  groups: '/api/groups',
+  codes: '/api/codes',
+  domains: '/api/domains',
+  line: '/api/line'
+};
+
+const state = {
+  edition: 'community',
+  groups: [],
+  codes: [],
+  domains: [],
+  lines: [],
+  currentGroupId: null
+};
+
+const $ = (id) => document.getElementById(id);
+
+async function apiGet(path) {
+  const res = await fetch(path, { credentials: 'same-origin' });
+  if (res.status === 401) { showLogin(); throw new Error('unauthorized'); }
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+
+async function apiSend(path, method, body) {
+  const res = await fetch(path, {
+    method,
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  if (res.status === 401) { showLogin(); throw new Error('unauthorized'); }
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+
+// ---------- 畫面切換 ----------
+function showLogin() {
+  $('loginView').classList.remove('hidden');
+  $('mainView').classList.add('hidden');
+}
+
+function showMain() {
+  $('loginView').classList.add('hidden');
+  $('mainView').classList.remove('hidden');
+}
+
+// ---------- 登入 ----------
+async function doLogin() {
+  const username = $('loginUser').value.trim();
+  const password = $('loginPass').value;
+  $('loginErr').textContent = '';
+
+  if (!username || !password) {
+    $('loginErr').textContent = '請輸入帳號與密碼。';
+    return;
+  }
+
+  try {
+    const res = await fetch(API.login, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      $('loginErr').textContent = data.error || '登入失敗';
+      return;
+    }
+    $('loginPass').value = '';
+    await initMain();
+  } catch (e) {
+    $('loginErr').textContent = '登入失敗：' + e.message;
+  }
+}
+
+async function doLogout() {
+  try { await fetch(API.logout, { method: 'POST', credentials: 'same-origin' }); } catch (_) {}
+  showLogin();
+}
+
+// ---------- 版本 ----------
+function renderEdition(data) {
+  const badge = $('editionBadge');
+  const text = $('editionText');
+  const expiry = $('expiryText');
+  const err = $('licenseErr');
+  err.textContent = '';
+
+  if (data.edition === 'enterprise') {
+    badge.textContent = '商業續租版';
+    badge.className = 'badge enterprise';
+    text.textContent = '商業續租版已啟用';
+    expiry.textContent = data.expiresAt
+      ? '到期時間：' + new Date(data.expiresAt).toISOString()
+      : '';
+  } else {
+    badge.textContent = '社群免費版';
+    badge.className = 'badge community';
+    text.textContent = '社群免費版';
+    expiry.textContent = '限制：1 個團隊、5 名成員、1 個網域、1 組 LINE';
+    if (data.reason) err.textContent = '序號驗證未通過（' + data.reason + '）';
+  }
+
+  state.edition = data.edition;
+  applyLimits();
+}
+
+function applyLimits() {
+  const isEnt = state.edition === 'enterprise';
+  const addGroup = $('addGroupBtn');
+  const addDomain = $('addDomainBtn');
+  const addLine = $('addLineBtn');
+
+  addGroup.disabled = !isEnt && state.groups.length >= 1;
+  addDomain.disabled = !isEnt && state.domains.length >= 1;
+  addLine.disabled = !isEnt && state.lines.length >= 1;
+
+  addGroup.classList.toggle('locked', addGroup.disabled);
+  addDomain.classList.toggle('locked', addDomain.disabled);
+  addLine.classList.toggle('locked', addLine.disabled);
+
+  $('groupLimitHint').textContent = isEnt
+    ? '商業版：團隊數量無限制。'
+    : '免費版：僅限 1 個團隊，最多 5 名成員。';
+  $('domainLimitHint').textContent = isEnt
+    ? '商業版：網域數量無限制。'
+    : '免費版：僅限 1 個網域。';
+  $('lineLimitHint').textContent = isEnt
+    ? '商業版：LINE 綁定數量無限制，可分流。'
+    : '免費版：僅限 1 組 LINE 綁定。';
+}
+
+// ---------- 團隊 ----------
+function renderGroups() {
+  const list = $('groupsList');
+  list.innerHTML = '';
+  const filter = $('codeGroupFilter');
+  filter.innerHTML = '<option value="">全部團隊</option>';
+
+  if (!state.groups.length) {
+    list.innerHTML = '<div class="empty">尚無團隊</div>';
+    applyLimits();
+    return;
+  }
+
+  state.groups.forEach(g => {
+    const el = document.createElement('div');
+    el.className = 'item';
+    el.innerHTML = `
+      <div>
+        <div><b>${escapeHtml(g.name)}</b></div>
+        <div class="meta">${g.slug || ''}</div>
+      </div>
+      <div class="meta">${g.memberCount || 0} 名成員</div>
+      <div class="btn-row">
+        <button class="ghost small" data-act="members" data-id="${g.id}">成員</button>
+        <button class="ghost small" data-act="rename" data-id="${g.id}">改名</button>
+        <button class="danger small" data-act="delete" data-id="${g.id}">刪除</button>
+      </div>
+    `;
+    list.appendChild(el);
+
+    const opt = document.createElement('option');
+    opt.value = g.id;
+    opt.textContent = g.name;
+    filter.appendChild(opt);
+  });
+
+  applyLimits();
+}
+
+async function addGroup() {
+  const name = prompt('請輸入團隊名稱：');
+  if (!name) return;
+  try {
+    await apiSend(API.groups, 'POST', { name });
+    await loadGroups();
+  } catch (e) { alert('新增失敗：' + e.message); }
+}
+
+async function deleteGroup(id) {
+  if (!confirm('確定要刪除此團隊？相關成員與驗證碼也會一併刪除。')) return;
+  try {
+    await apiSend(API.groups + '/' + id, 'DELETE');
+    await loadGroups();
+    await loadCodes();
+  } catch (e) { alert('刪除失敗：' + e.message); }
+}
+
+async function renameGroup(id) {
+  const g = state.groups.find(x => String(x.id) === String(id));
+  const name = prompt('新名稱：', g ? g.name : '');
+  if (!name) return;
+  try {
+    await apiSend(API.groups + '/' + id, 'PATCH', { name });
+    await loadGroups();
+  } catch (e) { alert('改名失敗：' + e.message); }
+}
+
+// ---------- 成員 ----------
+async function openMembers(groupId) {
+  state.currentGroupId = groupId;
+  const g = state.groups.find(x => String(x.id) === String(groupId));
+  $('membersModalTitle').textContent = '成員管理 — ' + (g ? g.name : '');
+  $('memberErr').textContent = '';
+  $('membersModal').classList.add('show');
+  await loadMembers(groupId);
+}
+
+async function loadMembers(groupId) {
+  const list = $('membersList');
+  list.innerHTML = '<div class="empty">載入中…</div>';
+  try {
+    const data = await apiGet(`/api/groups/${groupId}/members`);
+    const members = data.members || [];
+    list.innerHTML = '';
+    if (!members.length) {
+      list.innerHTML = '<div class="empty">尚無成員</div>';
+      return;
+    }
+    members.forEach(m => {
+      const el = document.createElement('div');
+      el.className = 'item';
+      el.innerHTML = `
+        <div>
+          <div><b>${escapeHtml(m.display_name)}</b></div>
+          <div class="meta">${m.role}</div>
+        </div>
+        <button class="danger small" data-mid="${m.id}">刪除</button>
+      `;
+      list.appendChild(el);
+    });
+  } catch (e) {
+    list.innerHTML = '<div class="empty">載入失敗</div>';
+  }
+}
+
+async function addMember() {
+  const name = $('memberName').value.trim();
+  const role = $('memberRole').value;
+  $('memberErr').textContent = '';
+  if (!name) { $('memberErr').textContent = '請輸入成員名稱。'; return; }
+  try {
+    await apiSend(`/api/groups/${state.currentGroupId}/members`, 'POST', {
+      display_name: name, role
+    });
+    $('memberName').value = '';
+    await loadMembers(state.currentGroupId);
+    await loadGroups();
+  } catch (e) {
+    $('memberErr').textContent = '新增失敗：' + e.message;
+  }
+}
+
+async function deleteMember(id) {
+  if (!confirm('確定刪除此成員？')) return;
+  try {
+    await apiSend('/api/members/' + id, 'DELETE');
+    await loadMembers(state.currentGroupId);
+    await loadGroups();
+  } catch (e) { alert('刪除失敗：' + e.message); }
+}
+
+// ---------- 驗證碼 ----------
+function renderCodes() {
+  const list = $('codesList');
+  list.innerHTML = '';
+  if (!state.codes.length) {
+    list.innerHTML = '<div class="empty">尚無驗證碼</div>';
+    return;
+  }
+  state.codes.forEach(c => {
+    const el = document.createElement('div');
+    el.className = 'item';
+    el.innerHTML = `
+      <div class="code">${escapeHtml(c.code)}</div>
+      <div class="meta">
+        ${escapeHtml(c.sender || '未知寄件者')}<br>
+        ${new Date(c.received_at).toLocaleString()}<br>
+        ${c.is_used ? '已使用' : '未使用'}
+      </div>
+      <div class="btn-row">
+        <button class="ghost small" data-act="used" data-id="${c.id}">標記已用</button>
+        <button class="danger small" data-act="delete" data-id="${c.id}">刪除</button>
+      </div>
+    `;
+    list.appendChild(el);
+  });
+}
+
+async function deleteCode(id) {
+  if (!confirm('確定刪除此驗證碼？')) return;
+  try {
+    await apiSend('/api/codes/' + id, 'DELETE');
+    await loadCodes();
+  } catch (e) { alert('刪除失敗：' + e.message); }
+}
+
+async function markCodeUsed(id) {
+  try {
+    await apiSend('/api/codes/' + id + '/used', 'POST');
+    await loadCodes();
+  } catch (e) { alert('操作失敗：' + e.message); }
+}
+
+// ---------- 網域 ----------
+function renderDomains() {
+  const list = $('domainsList');
+  list.innerHTML = '';
+  if (!state.domains.length) {
+    list.innerHTML = '<div class="empty">尚無網域</div>';
+    return;
+  }
+  state.domains.forEach(d => {
+    const el = document.createElement('div');
+    el.className = 'item';
+    el.innerHTML = `
+      <div>
+        <div><b>${escapeHtml(d.domain)}</b></div>
+        <div class="meta">團隊 ID：${d.group_id}</div>
+      </div>
+      <button class="danger small" data-did="${d.id}">刪除</button>
+    `;
+    list.appendChild(el);
+  });
+}
+
+function openDomainModal() {
+  const sel = $('domainGroupSelect');
+  sel.innerHTML = '';
+  state.groups.forEach(g => {
+    const opt = document.createElement('option');
+    opt.value = g.id;
+    opt.textContent = g.name;
+    sel.appendChild(opt);
+  });
+  $('domainErr').textContent = '';
+  $('domainInput').value = '';
+  $('domainModal').classList.add('show');
+}
+
+async function saveDomain() {
+  const group_id = $('domainGroupSelect').value;
+  const domain = $('domainInput').value.trim();
+  $('domainErr').textContent = '';
+  if (!domain) { $('domainErr').textContent = '請輸入網域。'; return; }
+  try {
+    await apiSend(API.domains, 'POST', { domain, group_id });
+    $('domainModal').classList.remove('show');
+    await loadDomains();
+  } catch (e) {
+    $('domainErr').textContent = '儲存失敗：' + e.message;
+  }
+}
+
+async function deleteDomain(id) {
+  if (!confirm('確定刪除此網域？')) return;
+  try {
+    await apiSend(API.domains + '/' + id, 'DELETE');
+    await loadDomains();
+  } catch (e) { alert('刪除失敗：' + e.message); }
+}
+
+// ---------- LINE ----------
+function renderLines() {
+  const list = $('lineList');
+  list.innerHTML = '';
+  if (!state.lines.length) {
+    list.innerHTML = '<div class="empty">尚無 LINE 綁定</div>';
+    return;
+  }
+  state.lines.forEach(l => {
+    const el = document.createElement('div');
+    el.className = 'item';
+    el.innerHTML = `
+      <div>
+        <div><b>${escapeHtml(l.label || '未命名')}</b></div>
+        <div class="meta">${escapeHtml(l.line_group_id)}</div>
+      </div>
+      <div class="meta">${l.is_default ? '預設' : '團隊專屬'}</div>
+      <button class="danger small" data-lid="${l.id}">刪除</button>
+    `;
+    list.appendChild(el);
+  });
+}
+
+function openLineModal() {
+  const sel = $('lineGroupSelect');
+  sel.innerHTML = '<option value="">預設群組</option>';
+  state.groups.forEach(g => {
+    const opt = document.createElement('option');
+    opt.value = g.id;
+    opt.textContent = g.name;
+    sel.appendChild(opt);
+  });
+  $('lineLabel').value = '';
+  $('lineGroupId').value = '';
+  $('lineToken').value = '';
+  $('lineErr').textContent = '';
+  $('lineModal').classList.add('show');
+}
+
+async function saveLine() {
+  const group_id = $('lineGroupSelect').value || null;
+  const label = $('lineLabel').value.trim();
+  const line_group_id = $('lineGroupId').value.trim();
+  const channel_token = $('lineToken').value.trim();
+  $('lineErr').textContent = '';
+
+  if (!line_group_id) { $('lineErr').textContent = '請輸入 LINE Group ID。'; return; }
+  if (!channel_token) { $('lineErr').textContent = '請輸入 Token。'; return; }
+
+  try {
+    await apiSend(API.line, 'POST', { group_id, label, line_group_id, channel_token });
+    $('lineModal').classList.remove('show');
+    await loadLines();
+  } catch (e) {
+    $('lineErr').textContent = '儲存失敗：' + e.message;
+  }
+}
+
+async function deleteLine(id) {
+  if (!confirm('確定刪除此 LINE 綁定？')) return;
+  try {
+    await apiSend(API.line + '/' + id, 'DELETE');
+    await loadLines();
+  } catch (e) { alert('刪除失敗：' + e.message); }
+}
+
+// ---------- 載入 ----------
+async function loadLicense() {
+  try {
+    const data = await apiGet(API.license);
+    renderEdition(data);
+  } catch (e) {
+    $('editionText').textContent = '無法取得版本資訊';
+    $('licenseErr').textContent = e.message;
+  }
+}
+
+async function loadGroups() {
+  try {
+    const data = await apiGet(API.groups);
+    state.groups = data.groups || [];
+    renderGroups();
+  } catch (e) {
+    state.groups = [];
+    renderGroups();
+  }
+}
+
+async function loadCodes() {
+  try {
+    const gid = $('codeGroupFilter').value;
+    const path = gid ? API.codes + '?group_id=' + gid : API.codes;
+    const data = await apiGet(path);
+    state.codes = data.codes || [];
+    renderCodes();
+  } catch (e) {
+    state.codes = [];
+    renderCodes();
+  }
+}
+
+async function loadDomains() {
+  try {
+    const data = await apiGet(API.domains);
+    state.domains = data.domains || [];
+    renderDomains();
+    applyLimits();
+  } catch (e) {
+    state.domains = [];
+    renderDomains();
+  }
+}
+
+async function loadLines() {
+  try {
+    const data = await apiGet(API.line);
+    state.lines = data.bindings || [];
+    renderLines();
+    applyLimits();
+  } catch (e) {
+    state.lines = [];
+    renderLines();
+  }
+}
+
+// ---------- 工具 ----------
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// ---------- 初始化 ----------
+async function initMain() {
+  showMain();
+  await loadLicense();
+  await loadGroups();
+  await loadCodes();
+  await loadDomains();
+  await loadLines();
+
+  setInterval(loadCodes, 10000);
+}
+
+async function bootstrap() {
+  try {
+    const me = await apiGet(API.me);
+    if (me.loggedIn) await initMain();
+    else showLogin();
+  } catch (_) {
+    showLogin();
+  }
+}
+
+// ---------- 事件綁定 ----------
+$('loginBtn').addEventListener('click', doLogin);
+$('loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+$('logoutBtn').addEventListener('click', doLogout);
+
+$('refreshLicenseBtn').addEventListener('click', loadLicense);
+$('addGroupBtn').addEventListener('click', addGroup);
+$('loadGroupsBtn').addEventListener('click', loadGroups);
+$('refreshCodesBtn').addEventListener('click', loadCodes);
+$('codeGroupFilter').addEventListener('change', loadCodes);
+
+$('addDomainBtn').addEventListener('click', openDomainModal);
+$('loadDomainsBtn').addEventListener('click', loadDomains);
+$('domainSaveBtn').addEventListener('click', saveDomain);
+$('domainCancelBtn').addEventListener('click', () => $('domainModal').classList.remove('show'));
+
+$('addLineBtn').addEventListener('click', openLineModal);
+$('loadLineBtn').addEventListener('click', loadLines);
+$('lineSaveBtn').addEventListener('click', saveLine);
+$('lineCancelBtn').addEventListener('click', () => $('lineModal').classList.remove('show'));
+
+$('addMemberBtn').addEventListener('click', addMember);
+$('closeMembersBtn').addEventListener('click', () => $('membersModal').classList.remove('show'));
+
+// 事件代理
+document.addEventListener('click', (e) => {
+  const t = e.target;
+  if (!t || !t.dataset) return;
+
+  if (t.dataset.act === 'members') openMembers(t.dataset.id);
+  if (t.dataset.act === 'rename') renameGroup(t.dataset.id);
+  if (t.dataset.act === 'delete' && t.closest('#groupsList')) deleteGroup(t.dataset.id);
+  if (t.dataset.act === 'delete' && t.closest('#codesList')) deleteCode(t.dataset.id);
+  if (t.dataset.act === 'used') markCodeUsed(t.dataset.id);
+  if (t.dataset.mid) deleteMember(t.dataset.mid);
+  if (t.dataset.did) deleteDomain(t.dataset.did);
+  if (t.dataset.lid) deleteLine(t.dataset.lid);
+});
+
+// 啟動
+bootstrap();
+</script>
+</body>
+</html>

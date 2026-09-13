@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>BoxHax — 團隊驗證碼共享面板</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2f3a;
+    --text: #e6e8ee;
+    --muted: #8b93a7;
+    --accent: #4f8cff;
+    --ok: #2ecc71;
+    --warn: #f1c40f;
+    --err: #e74c3c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  header h1 { font-size: 18px; margin: 0; }
+  .badge {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #232833;
+    color: var(--muted);
+  }
+  .badge.enterprise { background: #1e3a5f; color: #7fb3ff; }
+  .badge.community { background: #2a2f3a; color: var(--muted); }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 24px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .panel h2 {
+    font-size: 15px;
+    margin: 0 0 12px;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .row { margin-bottom: 14px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  input, select {
+    width: 100%;
+    padding: 10px 12px;
+    background: #0c0e12;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  button {
+    padding: 10px 16px;
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { opacity: 0.9; }
+  button:disabled {
+    background: #2a2f3a;
+    color: #5a6172;
+    cursor: not-allowed;
+  }
+  button.ghost {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  button.danger {
+    background: transparent;
+    border: 1px solid #5a2a2a;
+    color: var(--err);
+  }
+  button.small { padding: 6px 10px; font-size: 12px; }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .list {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    background: #0c0e12;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .item .code {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 20px;
+    letter-spacing: 2px;
+    color: var(--ok);
+  }
+  .item .meta {
+    font-size: 12px;
+    color: var(--muted);
+    text-align: right;
+  }
+  .empty {
+    color: var(--muted);
+    font-size: 13px;
+    padding: 20px 0;
+    text-align: center;
+  }
+  .modal-bg {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 100;
+  }
+  .modal-bg.show { display: flex; }
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    width: 100%;
+    max-width: 460px;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+  .modal h3 { margin: 0 0 16px; font-size: 16px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .err { color: var(--err); font-size: 13px; margin-top: 8px; }
+  .locked { opacity: 0.5; cursor: not-allowed; }
+  .flex-between {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .hidden { display: none !important; }
+
+  /* 登入頁 */
+  .login-wrap {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .login-box {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    width: 100%;
+    max-width: 380px;
+  }
+  .login-box h1 {
+    font-size: 20px;
+    margin: 0 0 6px;
+    text-align: center;
+  }
+  .login-box .sub {
+    font-size: 13px;
+    color: var(--muted);
+    text-align: center;
+    margin-bottom: 20px;
+  }
+</style>
+</head>
+<body>
+
+<!-- 登入頁 -->
+<div id="loginView" class="login-wrap hidden">
+  <div class="login-box">
+    <h1>BoxHax</h1>
+    <div class="sub">請輸入管理員帳密</div>
+    <div class="row">
+      <label>帳號</label>
+      <input id="loginUser" type="text" autocomplete="username" />
+    </div>
+    <div class="row">
+      <label>密碼</label>
+      <input id="loginPass" type="password" autocomplete="current-password" />
+    </div>
+    <button id="loginBtn" style="width:100%">登入</button>
+    <div class="err" id="loginErr"></div>
+  </div>
+</div>
+
+<!-- 主面板 -->
+<div id="mainView" class="hidden">
+  <header>
+    <h1>BoxHax</h1>
+    <div class="btn-row">
+      <span id="editionBadge" class="badge">載入中…</span>
+      <button class="ghost small" id="logoutBtn">登出</button>
+    </div>
+  </header>
+
+  <div class="wrap">
+
+    <!-- 版本狀態 -->
+    <div class="panel">
+      <h2>版本狀態</h2>
+      <div class="flex-between">
+        <div>
+          <div id="editionText">檢查中…</div>
+          <div class="hint" id="expiryText"></div>
+        </div>
+        <button class="ghost small" id="refreshLicenseBtn">重新檢查</button>
+      </div>
+      <div class="err" id="licenseErr"></div>
+    </div>
+
+    <!-- 團隊管理 -->
+    <div class="panel">
+      <h2>團隊管理</h2>
+      <div class="btn-row">
+        <button id="addGroupBtn">新增團隊</button>
+        <button class="ghost" id="loadGroupsBtn">重新載入</button>
+      </div>
+      <div class="hint" id="groupLimitHint"></div>
+      <div id="groupsList" class="list"></div>
+    </div>
+
+    <!-- 驗證碼串流 -->
+    <div class="panel">
+      <h2>驗證碼即時串流</h2>
+      <div class="flex-between">
+        <select id="codeGroupFilter" style="max-width:240px">
+          <option value="">全部團隊</option>
+        </select>
+        <button class="ghost small" id="refreshCodesBtn">重新整理</button>
+      </div>
+      <div id="codesList" class="list">
+        <div class="empty">尚無驗證碼</div>
+      </div>
+    </div>
+
+    <!-- 網域管理 -->
+    <div class="panel">
+      <h2>網域管理</h2>
+      <div class="btn-row">
+        <button id="addDomainBtn">新增網域</button>
+        <button class="ghost" id="loadDomainsBtn">重新載入</button>
+      </div>
+      <div class="hint" id="domainLimitHint"></div>
+      <div id="domainsList" class="list"></div>
+    </div>
+
+    <!-- LINE 設定 -->
+    <div class="panel">
+      <h2>LINE 推播設定</h2>
+      <div class="btn-row">
+        <button id="addLineBtn">新增綁定</button>
+        <button class="ghost" id="loadLineBtn">重新載入</button>
+      </div>
+      <div class="hint" id="lineLimitHint"></div>
+      <div id="lineList" class="list"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- 成員管理 Modal -->
+<div class="modal-bg" id="membersModal">
+  <div class="modal">
+    <h3 id="membersModalTitle">成員管理</h3>
+    <div class="row">
+      <label>成員名稱</label>
+      <input id="memberName" type="text" placeholder="例如：小明" />
+    </div>
+    <div class="row">
+      <label>權限</label>
+      <select id="memberRole">
+        <option value="member">成員</option>
+        <option value="admin">管理員</option>
+        <option value="viewer">檢視者</option>
+      </select>
+    </div>
+    <div class="btn-row">
+      <button id="addMemberBtn">新增成員</button>
+      <button class="ghost" id="closeMembersBtn">關閉</button>
+    </div>
+    <div class="err" id="memberErr"></div>
+    <div id="membersList" class="list"></div>
+  </div>
+</div>
+
+<!-- LINE 新增 Modal -->
+<div class="modal-bg" id="lineModal">
+  <div class="modal">
+    <h3>新增 LINE 綁定</h3>
+    <div class="row">
+      <label>綁定團隊（可留空 = 預設）</label>
+      <select id="lineGroupSelect">
+        <option value="">預設群組</option>
+      </select>
+    </div>
+    <div class="row">
+      <label>顯示名稱</label>
+      <input id="lineLabel" type="text" placeholder="例如：家庭群" />
+    </div>
+    <div class="row">
+      <label>LINE Group ID</label>
+      <input id="lineGroupId" type="text" placeholder="Cxxxxxxxx..." />
+    </div>
+    <div class="row">
+      <label>Channel Access Token</label>
+      <input id="lineToken" type="password" placeholder="貼上 Token" />
+    </div>
+    <div class="btn-row">
+      <button id="lineSaveBtn">儲存</button>
+      <button class="ghost" id="lineCancelBtn">取消</button>
+    </div>
+    <div class="err" id="lineErr"></div>
+  </div>
+</div>
+
+<!-- 網域新增 Modal -->
+<div class="modal-bg" id="domainModal">
+  <div class="modal">
+    <h3>新增網域</h3>
+    <div class="row">
+      <label>所屬團隊</label>
+      <select id="domainGroupSelect"></select>
+    </div>
+    <div class="row">
+      <label>網域</label>
+      <input id="domainInput" type="text" placeholder="例如 inbox.example.com" />
+    </div>
+    <div class="btn-row">
+      <button id="domainSaveBtn">儲存</button>
+      <button class="ghost" id="domainCancelBtn">取消</button>
+    </div>
+    <div class="err" id="domainErr"></div>
+  </div>
+</div>

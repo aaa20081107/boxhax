@@ -1,0 +1,3 @@
+name = "boxhax"
+main = "boxhax-core.min.js"
+compatibility_date = "2025-01-01"
