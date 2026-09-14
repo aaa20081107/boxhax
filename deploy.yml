@@ -3,6 +3,7 @@ name: Deploy to Cloudflare Workers
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -10,8 +11,19 @@ jobs:
     name: Deploy
     steps:
       - uses: actions/checkout@v4
+
       - name: Deploy to Cloudflare
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          secrets: |
+            ADMIN_PASSWORD
+            ADMIN_USERNAME
+            SECRET_SALT
+            SESSION_SECRET
+        env:
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
+          SECRET_SALT: ${{ secrets.SECRET_SALT }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
