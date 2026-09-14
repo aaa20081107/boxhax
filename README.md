@@ -13,6 +13,7 @@ BoxHax 是一套完全獨立部署、核心閉源的團隊信箱驗證碼共享�
 - **雙軌制版本**：社群免費版 / 商業續租版
 - **多租戶架構**：多團隊、多成員、多網域、多 LINE 群組
 - **本地密碼學時間鎖**：序號綁定網域與到期日，無法偽造
+- **一鍵初始化**：打開網頁輸入密碼即可建立資料庫
 - **LINE 分流推播**：不同團隊推送至不同 LINE 群組
 - **完全自架**：部署在你自己的 Cloudflare 帳號
 
@@ -31,6 +32,8 @@ BoxHax 是一套完全獨立部署、核心閉源的團隊信箱驗證碼共享�
 
 ## 安裝流程
 
+**詳細圖文版請見 `install-guide.md`。以下為快速摘要：**
+
 ### 步驟 1：Fork 此儲存庫
 
 點擊右上角 **Fork**，將此專案複製到你的 GitHub 帳號。
@@ -40,16 +43,15 @@ BoxHax 是一套完全獨立部署、核心閉源的團隊信箱驗證碼共享�
 1. 登入 Cloudflare Dashboard
 2. 左側選單 → **Workers & Pages** → **D1**
 3. 點 **Create database**，命名為 `boxhax-db`
-4. 進入資料庫 → **Console**
-5. 將 `schema.sql` 的全部內容貼上，點 **Execute**
+4. **不用貼任何 SQL**，稍後由程式自動建立
 
-### 步驟 3：連接 GitHub 儲存庫
+### 步驟 3：連接 GitHub 部署
 
 1. Cloudflare Dashboard → **Workers & Pages**
 2. 點 **Create** → **Import a repository**
 3. 選擇你 Fork 的 `boxhax` 儲存庫
 4. Build command 留空
-5. Deploy command 填 `npx wrangler deploy`
+5. Deploy command 留空
 6. 點 **Save and Deploy**
 
 ### 步驟 4：綁定 D1 資料庫
@@ -67,30 +69,40 @@ BoxHax 是一套完全獨立部署、核心閉源的團隊信箱驗證碼共享�
 |---|---|---|
 | `ADMIN_USERNAME` | Text | 管理員帳號（預設 `admin`） |
 | `ADMIN_PASSWORD` | Secret | 管理員密碼（必填） |
-| `SESSION_SECRET` | Secret | Session 簽章用（可留空） |
 | `SECRET_SALT` | Secret | 序號驗證鹽巴（必填） |
+| `SESSION_SECRET` | Secret | Session 簽章用（必填） |
+| `INIT_TOKEN` | Secret | 初始化資料庫用（必填） |
 | `LICENSE_KEY` | Secret | 續租序號（沒有就留空） |
-| `LINE_DEFAULT_GROUP_ID` | Text | 預設 LINE 群組 ID |
-| `LINE_CHANNEL_ACCESS_TOKEN` | Secret | LINE Bot 權杖 |
+| `LINE_DEFAULT_GROUP_ID` | Text | 預設 LINE 群組 ID（可選） |
+| `LINE_CHANNEL_ACCESS_TOKEN` | Secret | LINE Bot 權杖（可選） |
 
-### 步驟 6：部署前端面板
+### 步驟 6：一鍵初始化資料庫
 
-`dashboard.html` 建議用 **Cloudflare Pages** 部署：
+打開你的 Worker 網址：
+https://你的-worker網址.workers.dev/init
+
+text
+
+輸入 `INIT_TOKEN`，點「一鍵初始化」。
+
+看到 **✅ 資料庫初始化完成！** 就成功。
+
+### 步驟 7：部署前端面板
+
+用 **Cloudflare Pages** 部署：
 
 1. Cloudflare Dashboard → **Workers & Pages** → **Pages**
 2. 連接同一個 GitHub 儲存庫
 3. Build output directory 填 `.`（根目錄）
 4. 部署完成後，將 Pages 的網域綁定至你的自訂網域
 
-或者直接將 `dashboard.html` 放在 Worker 的靜態資源中（需另外設定）。
-
-### 步驟 7：設定 LINE Bot
+### 步驟 8：設定 LINE Bot（可選）
 
 1. 前往 [LINE Developers](https://developers.line.biz/)
 2. 建立 Provider → 建立 Messaging API Channel
 3. 取得 **Channel Access Token**
 4. 將 Bot 邀請至目標 LINE 群組
-5. 取得群組 ID（可透過 Webhook 或第三方工具）
+5. 取得群組 ID
 6. 回到 BoxHax 面板 → LINE 設定 → 新增綁定
 
 ---
@@ -137,6 +149,12 @@ BoxHax 是一套完全獨立部署、核心閉源的團隊信箱驗證碼共享�
 ### Q：資料存在哪裡？
 
 全部存在你自己的 Cloudflare D1 資料庫，作者完全不會接觸。
+
+### Q：初始化失敗怎麼辦？
+
+1. 確認 `INIT_TOKEN` 與 Cloudflare 環境變數一致
+2. 確認 D1 綁定名稱是 `DB`
+3. 重新部署 Worker 後再試
 
 ### Q：可以自訂網域嗎？
 
