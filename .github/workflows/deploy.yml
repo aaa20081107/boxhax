@@ -18,3 +18,6 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+          
