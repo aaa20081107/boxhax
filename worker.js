@@ -1,8 +1,7 @@
 // ============================================================
-// BoxHax by Nova - Worker 核心（完整版 + 修正 CORS）
+// BoxHax by Nova - Worker 核心（完整版 + 初始化端點）
 // ============================================================
 
-// ---------- 免費版限制 ----------
 const LIMITS = {
   community:  { groups: 1,        members: 5,        domains: 1,        line: 1 },
   enterprise: { groups: Infinity, members: Infinity, domains: Infinity, line: Infinity }
@@ -45,6 +44,13 @@ function json(data, status = 200, request = null) {
   const headers = { 'content-type': 'application/json; charset=utf-8' };
   if (request) Object.assign(headers, getCorsHeaders(request));
   return new Response(JSON.stringify(data), { status, headers });
+}
+
+function html(body, status = 200) {
+  return new Response(body, {
+    status,
+    headers: { 'content-type': 'text/html; charset=utf-8' }
+  });
 }
 
 function unauthorized(request) {
@@ -184,6 +190,178 @@ function extractCode(text) {
   }
   const m = text.match(/\b(\d{4,6})\b/);
   return m ? m[1] : null;
+}
+
+// ============================================================
+// 初始化資料庫
+// ============================================================
+const SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS license (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    license_key       TEXT,
+    edition           TEXT NOT NULL DEFAULT 'community',
+    bound_domain      TEXT,
+    expires_at        INTEGER,
+    activated_at      INTEGER,
+    last_checked_at   INTEGER,
+    is_valid          INTEGER NOT NULL DEFAULT 0
+  )`,
+  `CREATE TABLE IF NOT EXISTS groups (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    name              TEXT NOT NULL,
+    slug              TEXT UNIQUE,
+    owner_member_id   INTEGER,
+    max_members       INTEGER DEFAULT 5,
+    is_active         INTEGER NOT NULL DEFAULT 1,
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER
+  )`,
+  `CREATE TABLE IF NOT EXISTS members (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id          INTEGER NOT NULL,
+    display_name      TEXT NOT NULL,
+    email             TEXT,
+    role              TEXT NOT NULL DEFAULT 'member',
+    status            TEXT NOT NULL DEFAULT 'active',
+    line_user_id      TEXT,
+    joined_at         INTEGER NOT NULL,
+    last_seen_at      INTEGER,
+    FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_members_group ON members(group_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_members_role ON members(group_id, role)`,
+  `CREATE TABLE IF NOT EXISTS domains (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id          INTEGER NOT NULL,
+    domain            TEXT NOT NULL,
+    is_primary        INTEGER NOT NULL DEFAULT 0,
+    verified          INTEGER NOT NULL DEFAULT 0,
+    created_at        INTEGER NOT NULL,
+    FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_domains_unique ON domains(domain)`,
+  `CREATE INDEX IF NOT EXISTS idx_domains_group ON domains(group_id)`,
+  `CREATE TABLE IF NOT EXISTS line_bindings (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id          INTEGER,
+    label             TEXT,
+    line_group_id     TEXT NOT NULL,
+    channel_token     TEXT,
+    is_default        INTEGER NOT NULL DEFAULT 0,
+    is_active         INTEGER NOT NULL DEFAULT 1,
+    created_at        INTEGER NOT NULL,
+    FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_line_group ON line_bindings(group_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_line_default ON line_bindings(is_default)`,
+  `CREATE TABLE IF NOT EXISTS inboxes (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id          INTEGER NOT NULL,
+    address           TEXT NOT NULL,
+    provider          TEXT,
+    forward_token     TEXT UNIQUE,
+    is_active         INTEGER NOT NULL DEFAULT 1,
+    created_at        INTEGER NOT NULL,
+    FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_inboxes_group ON inboxes(group_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_inboxes_token ON inboxes(forward_token)`,
+  `CREATE TABLE IF NOT EXISTS codes (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id          INTEGER NOT NULL,
+    inbox_id          INTEGER,
+    code              TEXT NOT NULL,
+    sender            TEXT,
+    subject           TEXT,
+    raw_snippet       TEXT,
+    received_at       INTEGER NOT NULL,
+    expires_at        INTEGER,
+    is_used           INTEGER NOT NULL DEFAULT 0,
+    pushed            INTEGER NOT NULL DEFAULT 0,
+    created_at        INTEGER NOT NULL,
+    FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+    FOREIGN KEY (inbox_id) REFERENCES inboxes(id) ON DELETE SET NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_codes_group_time ON codes(group_id, received_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_codes_code ON codes(code)`,
+  `CREATE INDEX IF NOT EXISTS idx_codes_pushed ON codes(pushed)`,
+  `CREATE TABLE IF NOT EXISTS push_logs (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    code_id           INTEGER,
+    binding_id        INTEGER,
+    status            TEXT NOT NULL,
+    response          TEXT,
+    created_at        INTEGER NOT NULL,
+    FOREIGN KEY (code_id) REFERENCES codes(id) ON DELETE CASCADE,
+    FOREIGN KEY (binding_id) REFERENCES line_bindings(id) ON DELETE SET NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_push_logs_code ON push_logs(code_id)`,
+  `CREATE TABLE IF NOT EXISTS system_events (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type        TEXT NOT NULL,
+    message           TEXT,
+    meta              TEXT,
+    created_at        INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_events_type_time ON system_events(event_type, created_at DESC)`,
+  `INSERT INTO license (edition, is_valid)
+   SELECT 'community', 0
+   WHERE NOT EXISTS (SELECT 1 FROM license)`
+];
+
+async function runInit(env) {
+  const results = [];
+  for (let i = 0; i < SCHEMA_STATEMENTS.length; i++) {
+    try {
+      await env.DB.prepare(SCHEMA_STATEMENTS[i]).run();
+      results.push({ i, ok: true });
+    } catch (e) {
+      results.push({ i, ok: false, error: e.message });
+    }
+  }
+  return results;
+}
+
+// ---------- 初始化頁面 ----------
+function initPage(message, ok) {
+  const color = ok ? '#2ecc71' : '#e74c3c';
+  return `<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BoxHax — 初始化</title>
+<style>
+  body{margin:0;font-family:-apple-system,"Segoe UI","Noto Sans TC",sans-serif;
+    background:#0f1115;color:#e6e8ee;display:flex;align-items:center;
+    justify-content:center;min-height:100vh;padding:20px}
+  .box{background:#171a21;border:1px solid #2a2f3a;border-radius:12px;
+    padding:28px;width:100%;max-width:420px}
+  h1{font-size:20px;margin:0 0 6px;text-align:center}
+  .sub{font-size:13px;color:#8b93a7;text-align:center;margin-bottom:20px}
+  label{display:block;font-size:13px;color:#8b93a7;margin-bottom:6px}
+  input{width:100%;padding:10px 12px;background:#0c0e12;border:1px solid #2a2f3a;
+    border-radius:8px;color:#e6e8ee;font-size:14px;outline:none;box-sizing:border-box}
+  input:focus{border-color:#4f8cff}
+  button{width:100%;padding:12px;background:#4f8cff;border:none;border-radius:8px;
+    color:#fff;font-size:15px;font-weight:600;cursor:pointer;margin-top:14px}
+  button:hover{opacity:0.9}
+  .msg{margin-top:14px;font-size:13px;color:${color};text-align:center}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>BoxHax 初始化</h1>
+  <div class="sub">第一次使用請先初始化資料庫</div>
+  <form method="POST" action="/init">
+    <label>初始化密碼（INIT_TOKEN）</label>
+    <input type="password" name="token" placeholder="輸入你的 INIT_TOKEN" required />
+    <button type="submit">一鍵初始化</button>
+  </form>
+  ${message ? `<div class="msg">${message}</div>` : ''}
+</div>
+</body>
+</html>`;
 }
 
 // ============================================================
@@ -523,7 +701,40 @@ async function route(request, env) {
     return new Response(null, { status: 204, headers: getCorsHeaders(request) });
   }
 
-  // 公開
+  // ---------- 初始化頁面 ----------
+  if (path === '/init' && method === 'GET') {
+    return html(initPage('', false));
+  }
+
+  if (path === '/init' && method === 'POST') {
+    const formData = await request.formData().catch(() => null);
+    let token = '';
+
+    if (formData) {
+      token = formData.get('token') || '';
+    } else {
+      const body = await request.json().catch(() => ({}));
+      token = body.token || '';
+    }
+
+    const expected = env.INIT_TOKEN || '';
+    if (!expected) {
+      return html(initPage('系統未設定 INIT_TOKEN，請先在 Cloudflare 設定', false));
+    }
+    if (token !== expected) {
+      return html(initPage('初始化密碼錯誤', false));
+    }
+
+    const results = await runInit(env);
+    const failed = results.filter(r => !r.ok);
+    if (failed.length === 0) {
+      return html(initPage('✅ 資料庫初始化完成！<br><br>請前往 <a href="https://boxhax.pages.dev" style="color:#4f8cff">控制面板</a> 登入', true));
+    } else {
+      return html(initPage(`部分失敗：${failed.length} 個語句出錯<br>第一個錯誤：${failed[0].error}`, false));
+    }
+  }
+
+  // ---------- 公開 API ----------
   if (path === '/api/login' && method === 'POST') return handleLogin(request, env);
   if (path === '/api/logout' && method === 'POST') return handleLogout(request);
   if (path === '/api/me' && method === 'GET') return handleMe(request, env);
@@ -534,7 +745,7 @@ async function route(request, env) {
     return handleInbox(request, env, path.slice('/inbox/'.length));
   }
 
-  // 需登入
+  // ---------- 需登入 ----------
   const loggedIn = await isValidSession(request, env);
   if (!loggedIn && path.startsWith('/api/')) return unauthorized(request);
 
@@ -591,4 +802,5 @@ export default {
       return json({ error: e.message }, 500, request);
     }
   }
+};
 };
