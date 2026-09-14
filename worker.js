@@ -803,4 +803,3 @@ export default {
     }
   }
 };
-};
