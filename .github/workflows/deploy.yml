@@ -18,15 +18,3 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy
-          secrets: |
-            ADMIN_PASSWORD
-            ADMIN_USERNAME
-            SECRET_SALT
-            SESSION_SECRET
-            INIT_TOKEN
-        env:
-          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
-          ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
-          SECRET_SALT: ${{ secrets.SECRET_SALT }}
-          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
-          INIT_TOKEN: ${{ secrets.INIT_TOKEN }}
